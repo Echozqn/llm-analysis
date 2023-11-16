@@ -1,0 +1,10 @@
+{
+  "4090-pcie-24gb": {
+    "flops_efficiency":0.35,
+    "hbm_memory_efficiency": 0.5
+  },
+  "a100-pcie-40gb": {
+    "flops_efficiency": 0.44,
+    "hbm_memory_efficiency": 0.5
+  }
+}

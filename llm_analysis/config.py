@@ -18,7 +18,8 @@ import logging
 import os
 from dataclasses import dataclass
 from pathlib import Path
-
+import sys
+sys.path.append('/usr/local/lib/python3.9/site-packages')
 import fire
 
 from llm_analysis.constant import (
@@ -217,6 +218,7 @@ def get_model_config_from_hf(name: str, ) -> ModelConfig:
 def read_configs(config_dir_name: str, type="model") -> dict:
     """Read configs from a directory."""
     configs = {}
+
     for filename in os.listdir(config_dir_name):
         filepath = os.path.join(config_dir_name, filename)
         with open(filepath, "r") as f:
@@ -319,6 +321,7 @@ def list_dtype_configs() -> None:
 
 
 def get_model_config_by_name(name_or_path: str) -> ModelConfig:
+    logger.info(f">>> {name_or_path}")
     """Get model config from the populated mapping by name, or from model config json file path, if not found from the previous methods, try to get it from HuggingFace."""
     if name_or_path in model_configs:
         return model_configs[name_or_path]

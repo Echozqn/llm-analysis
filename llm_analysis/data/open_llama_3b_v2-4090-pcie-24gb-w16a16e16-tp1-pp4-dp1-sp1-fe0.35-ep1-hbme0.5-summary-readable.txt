@@ -1,0 +1,53 @@
+
+----------------------------------------------Summary-----------------------------------------------
+batch_size_per_gpu: 16
+max_batch_size_per_gpu: 20
+gradient_accumulation_steps: 4
+global_batch_size: 64
+dp_size: 1
+tp_size: 1
+pp_size: 4
+sp_size: 1
+ep_size: 1
+ds_zero: NONE
+total_num_gpus: 4
+seq_len: 1400
+total_num_tokens: 1.28 K
+num_params_total: 3.3 G
+num_active_params_total: 3.3 G
+activation_recomputation: FULL
+layernorm_dtype_bytes: 4
+mlp_activation_quant_bits: None
+mlp_recompute_gelu: True
+achieved_flops: 115.63999999999999
+flops_efficiency: 0.35
+hbm_memory_efficiency: 0.5
+num_flops_total_per_micro_batch: 632.62 T
+weight_memory_per_gpu: 1.79 GB
+weight_memory_embedding_per_gpu: 195.31 MB
+weight_memory_attn_per_gpu: 546.88 MB
+weight_memory_mlp_per_gpu: 1.07 GB
+weight_memory_layernorm_per_gpu: 87.5 KB
+gradient_memory_per_gpu: 3.59 GB
+optimizer_state_memory_per_gpu: 10.76 GB
+(weight+op_state+grad)_memory_per_gpu: 16.14 GB
+activation_memory_batch_size_1: 393.07 MB
+activation_memory_per_gpu: 6.14 GB
+activation_memory_attn_per_gpu: 0B
+activation_memory_mlp_per_gpu: 0B
+activation_memory_layernorm_per_gpu: 0B
+activation_memory_embedding_output_per_gpu: 2.67 GB
+(weight+op_state+grad+act)_memory_per_gpu: 22.28 GB
+memory_left_per_gpu: 1.72 GB
+memory_used_per_gpu: 22.28 GB
+latency_per_micro_batch: 1.37 s
+latency_fwd: 353.36 ms
+latency_fwd_attn: 116.04 ms
+latency_fwd_mlp: 190.42 ms
+latency_fwd_layernorm: 6.83 ms
+latency_fwd_tp_comm: 0.0 us
+latency_fwd_input_embedding: 406.35 us
+latency_fwd_output_embedding_loss: 39.67 ms
+latency_per_iter: 5.47 s
+total_training_latency: 0.0 us
+----------------------------------------------------------------------------------------------------

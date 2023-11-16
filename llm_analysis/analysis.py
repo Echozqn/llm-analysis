@@ -19,7 +19,8 @@ from enum import Enum
 from functools import total_ordering
 from pprint import pformat
 from typing import Union
-
+import sys
+sys.path.append('/usr/local/lib/python3.9/site-packages')
 import fire
 
 from llm_analysis.config import (
@@ -770,7 +771,8 @@ class LLMAnalysis:
             mlp_activation_quant_bits (int, optional): number of bits to quantize MLP activations; if set, override the values for mlp_1linear_quant_bits, mlp_gelu_input_quant_bits and mlp_2linear_quant_bits. Defaults to None.
             mlp_1linear_quant_bits (int, optional): number of bits to quantize the input activations of the first linear layer. Defaults to None.
             mlp_gelu_input_quant_bits (int, optional): number of bits to quantize the GELU input activations. Defaults to None.
-            mlp_2linear_quant_bits (int, optional): number of bits to quantize the input activations of the second linear layer. Defaults to None.            mlp_recompute_gelu (bool, optional): whether to recompute the gelu activation in the MLP backward pass. Defaults to False.
+            mlp_2linear_quant_bits (int, optional): number of bits to quantize the input activations of the second linear layer. Defaults to None.            
+            mlp_recompute_gelu (bool, optional): whether to recompute the gelu activation in the MLP backward pass. Defaults to False.
             mlp_gated_linear_units (bool, optional): whether to use gated linear units in the MLP. Defaults to False.
         Returns:
             Union[float, tuple]: the memory (in bytes) required to store the activations of a transformer layer or a tuple of its breakdown
@@ -1301,7 +1303,6 @@ class LLMAnalysis:
         """
         num_layers_per_gpu = int(self.model_config.num_layers /
                                  self.parallelism_config.pp_size)
-
         (
             latency_fwd_per_layer,
             breakdown_per_layer,
@@ -1327,7 +1328,7 @@ class LLMAnalysis:
         total_latency = (latency_fwd_all_layers + latency_fwd_input_embedding +
                          latency_fwd_output_embedding_loss)
 
-        logger.debug("latency_fwd_all_layers:"
+        logger.info("latency_fwd_all_layers:"
                      f" {round(latency_fwd_all_layers*1000, 3)} ms"
                      f" ({round(latency_fwd_per_layer*1000, 3)} ms x"
                      f" {num_layers_per_gpu}), latency_fwd_input_embedding:"
@@ -1335,7 +1336,7 @@ class LLMAnalysis:
                      " latency_fwd_output_embedding_loss:"
                      f" {round(latency_fwd_output_embedding_loss*1000, 3)} ms")
 
-        logger.debug(f"latency_fwd_total: {round(total_latency*1000, 3)} ms"
+        logger.info(f"latency_fwd_total: {round(total_latency*1000, 3)} ms"
                      f" ({round(latency_fwd_all_layers*1000, 3)} +"
                      f" {round(latency_fwd_input_embedding*1000, 3)} +"
                      f" {round(latency_fwd_output_embedding_loss*1000, 3)})")
@@ -1475,6 +1476,7 @@ class LLMAnalysis:
             for x in self.get_memory_weight_per_layer(ds_zero,
                                                       return_breakdown=True)
         ]
+        logger.info("num_layer = {self.model_config.num_layers}")
         memory_weight_last_layernorm = self.get_memory_weight_last_layernorm(
             ds_zero)
         weight_memory_per_gpu = (weight_memory_layers_per_gpu +
@@ -1849,6 +1851,7 @@ class LLMAnalysis:
         mlp_gated_linear_units: bool = False,
         output_dir: str = None,
         output_file_suffix: str = "",
+        output_detail_file_suffix: str = ""
     ) -> dict:
         """Training analysis given the configs and inputs.
 
@@ -1898,6 +1901,9 @@ class LLMAnalysis:
 
         num_layers_per_gpu = int(self.model_config.num_layers /
                                  self.parallelism_config.pp_size)
+
+        logger.info(f"num_layers_per_gpu = {num_layers_per_gpu}")
+        num_layers_per_gpu = 7
         if self.model_config.num_layers % self.parallelism_config.pp_size:
             logger.info(
                 "num_layers not be divisible by pp_size, taking the floor")
@@ -2063,6 +2069,80 @@ class LLMAnalysis:
         num_flops_total_per_micro_batch = (num_flops_fwd_total +
                                            num_flops_bwd_total +
                                            num_flops_recompute)
+        # elems_per_all_reduce = 71680000
+        # intra_node_bandwidth_in_GB_per_sec = 30
+        # latency_per_all_reduce = (
+        #     elems_per_all_reduce * 16 /
+        #     (0.5 * intra_node_bandwidth_in_GB_per_sec * 10**9)) # GB/s
+        # logger.info(f"xxx latency_per_all_reduce = {latency_per_all_reduce} s")
+
+        """here add some code"""
+        weight_memory_embedding = self.get_memory_embedding(ds_zero)
+        # 计算权重
+        weight_memory_layer = self.get_memory_weight_per_layer(ds_zero,
+                                                               return_breakdown=False)
+        # 计算优化器状态和梯度 直接用即可
+        optimizer_state_memory_per_layer, gradient_memory_per_layer = self.get_memory_optimizer_state_and_gradient_per_layer(
+            master_weights_dtype_bytes, other_op_bytes, ds_zero)
+        # 激活值的存储
+        activation_memory_per_layer = self.get_memory_activation_per_layer(
+            batch_size_per_gpu,
+            seq_len,
+            is_inference=False,
+            activation_recomputation=activation_recomputation,
+            layernorm_dtype_bytes=layernorm_dtype_bytes,
+            flash_attn=flash_attn,
+            softmax_dropout=softmax_dropout,
+            mlp_activation_quant_bits=mlp_activation_quant_bits,
+            mlp_1linear_quant_bits=mlp_1linear_quant_bits,
+            mlp_gelu_input_quant_bits=mlp_gelu_input_quant_bits,
+            mlp_2linear_quant_bits=mlp_2linear_quant_bits,
+            mlp_recompute_gelu=mlp_recompute_gelu,
+            return_breakdown=False,
+        )
+
+        activation_memory_embedding_output_per_layer = self.get_memory_activation_embedding_output(batch_size_per_gpu,
+                                                                                                   seq_len)
+        activation_memory_layernorm_per_layer = self.get_memory_activation_per_layernorm(
+            batch_size_per_gpu,
+            seq_len,
+            activation_recomputation,
+            layernorm_dtype_bytes,
+        )
+
+        (
+            latency_fwd_per_layer,
+            breakdown_per_layer,
+        ) = self.get_latency_fwd_per_layer(
+            batch_size_per_gpu,
+            seq_len,
+            False,
+            activation_recomputation,
+            layernorm_dtype_bytes,
+        )
+        latency_fwd_input_embedding = self.get_latency_fwd_input_embedding(
+            batch_size_per_gpu,
+            seq_len,
+            dtype_bytes=self.dtype_config.embedding_bits / BITS_PER_BYTE,
+        )
+
+        latency_fwd_output_embedding_loss = (
+            self.get_latency_fwd_output_embedding_loss(batch_size_per_gpu, seq_len))
+
+
+        detail_dict = {
+            "weight_memory_embedding": weight_memory_embedding,
+            "weight_memory_layer": weight_memory_layer,
+            "optimizer_state_memory_per_layer": optimizer_state_memory_per_layer,
+            "gradient_memory_per_layer": gradient_memory_per_layer,
+            "activation_memory_per_layer": activation_memory_per_layer,
+            "activation_memory_embedding_output_per_layer": activation_memory_embedding_output_per_layer,
+            "activation_memory_layernorm_per_layer": activation_memory_layernorm_per_layer,
+            "latency_fwd_per_layer": latency_fwd_per_layer,
+            "latency_fwd_input_embedding": latency_fwd_input_embedding,
+            "latency_fwd_output_embedding_loss": latency_fwd_output_embedding_loss,
+        }
+
 
         logger.info(
             "num_flops_total_per_micro_batch:"
@@ -2132,6 +2212,7 @@ class LLMAnalysis:
         gpu_hours = (total_training_latency * total_num_gpus /
                      3600 if total_training_latency is not None else None)
 
+        memory_used = self.gpu_config.mem_per_GPU_in_GB * 1024**3 - memory_left
         summary_dict = {
             "batch_size_per_gpu":
             batch_size_per_gpu,
@@ -2213,6 +2294,7 @@ class LLMAnalysis:
             optimizer_state_memory_per_gpu + activation_memory_per_gpu,
             "memory_left_per_gpu":
             memory_left,
+            "memory_used_per_gpu":memory_used,
             "latency_per_micro_batch":
             latency_per_micro_batch,
             "latency_fwd":
@@ -2232,6 +2314,10 @@ class LLMAnalysis:
                                      output_dir,
                                      print_human_readable=True,
                                      output_file_suffix=output_file_suffix)
+            self.output_summary_dict(detail_dict,
+                                     output_dir,
+                                     print_human_readable=True,
+                                     output_file_suffix=output_detail_file_suffix)
 
         return summary_dict
 
@@ -2376,6 +2462,7 @@ def train(
     num_gpus_per_node: int = NUM_GPUS_PER_NODE,
     output_dir: str = None,
     output_file_suffix: str = "",
+    output_detail_file_suffix: str = "",
 ) -> dict:
     """Entry point function of training analysis for the command line interface. This
     uses pre-defined name-to-configuration mapping and common arguments to construct
@@ -2428,7 +2515,7 @@ def train(
         " parallelism requires high communication bandwidth to be efficient"
         " and is best kept within a single node where high bandwidth NVLink"
         " is available.")
-
+    logger.info("FFFFA")
     if total_num_gpus and dp_size:
         assert (
             total_num_gpus == dp_size * tp_size * pp_size
@@ -2441,6 +2528,7 @@ def train(
         total_num_gpus = dp_size * tp_size * pp_size
     else:
         dp_size = 1
+
 
     model_config = get_model_config_by_name(model_name)
     gpu_config = get_gpu_config_by_name(gpu_name)
@@ -2486,6 +2574,7 @@ def train(
         mlp_gated_linear_units=mlp_gated_linear_units,
         output_dir=output_dir,
         output_file_suffix=output_file_suffix,
+        output_detail_file_suffix = output_detail_file_suffix,
     )
 
     return summary_dict
