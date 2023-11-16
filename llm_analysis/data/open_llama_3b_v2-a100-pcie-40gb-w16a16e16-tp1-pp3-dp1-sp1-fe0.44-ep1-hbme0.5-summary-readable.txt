@@ -19,9 +19,9 @@ activation_recomputation: FULL
 layernorm_dtype_bytes: 4
 mlp_activation_quant_bits: None
 mlp_recompute_gelu: True
-achieved_flops: 134.16
-flops_efficiency: 0.43
-hbm_memory_efficiency: 0.55
+achieved_flops: 137.28
+flops_efficiency: 0.44
+hbm_memory_efficiency: 0.5
 num_flops_total_per_micro_batch: 632.62 T
 weight_memory_per_gpu: 1.79 GB
 weight_memory_embedding_per_gpu: 195.31 MB
@@ -40,14 +40,14 @@ activation_memory_embedding_output_per_gpu: 2.67 GB
 (weight+op_state+grad+act)_memory_per_gpu: 22.28 GB
 memory_left_per_gpu: 17.72 GB
 memory_used_per_gpu: 22.28 GB
-latency_per_micro_batch: 1.57 s
-latency_fwd: 392.0 ms
-latency_fwd_attn: 133.36 ms
-latency_fwd_mlp: 218.84 ms
-latency_fwd_layernorm: 5.36 ms
+latency_per_micro_batch: 1.54 s
+latency_fwd: 383.78 ms
+latency_fwd_attn: 130.33 ms
+latency_fwd_mlp: 213.87 ms
+latency_fwd_layernorm: 5.9 ms
 latency_fwd_tp_comm: 0.0 us
-latency_fwd_input_embedding: 239.46 us
-latency_fwd_output_embedding_loss: 34.19 ms
-latency_per_iter: 6.29 s
+latency_fwd_input_embedding: 263.41 us
+latency_fwd_output_embedding_loss: 33.42 ms
+latency_per_iter: 6.14 s
 total_training_latency: 0.0 us
 ----------------------------------------------------------------------------------------------------

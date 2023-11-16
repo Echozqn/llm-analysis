@@ -7,7 +7,7 @@ gradient_memory_per_layer: 468.77 MB
 activation_memory_per_layer: 136.72 MB
 activation_memory_embedding_output_per_layer: 2.67 GB
 activation_memory_layernorm_per_layer: 0B
-latency_fwd_per_layer: 52.21 ms
-latency_fwd_input_embedding: 406.35 us
-latency_fwd_output_embedding_loss: 39.67 ms
+latency_fwd_per_layer: 43.76 ms
+latency_fwd_input_embedding: 263.41 us
+latency_fwd_output_embedding_loss: 33.42 ms
 ----------------------------------------------------------------------------------------------------

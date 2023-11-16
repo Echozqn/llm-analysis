@@ -1,9 +1,15 @@
 
 import argparse
 import json
+import os.path
+
 from llm_analysis.constant import *
 # python portal.py --model_name open_llama_3b_v2 --gpu_name a100-pcie-40gb --tp_size 1 --pp_size 3 --sp_size 1 --dp_size 1 --gradient_accumulation_steps 4 -b 16 --seq_len 1400  --total_num_tokens 1280 --activation_recomputation 2 --flops_efficiency 0.43 --hbm_memory_efficiency 0.55 --mlp_recompute_gelu True  --output_dir ./data
 # step1 启动llm-analysis
+def read_json(filename):
+    with open(filename, "r") as file:
+        gpu_efficiencies = json.load(file)
+    return gpu_efficiencies
 def get_args():
     # Create the parser
     parser = argparse.ArgumentParser()
@@ -84,8 +90,7 @@ def get_args():
     # Parse the arguments
     args = parser.parse_args()
     # Read the JSON file
-    with open("gpu_efficiency.json", "r") as file:
-        gpu_efficiencies = json.load(file)
+    gpu_efficiencies = read_json("gpu_efficiency.json")
     # Retrieve the efficiency details for the specified GPU type
     print(gpu_efficiencies,args.gpu_name)
     gpu_info = gpu_efficiencies.get(args.gpu_name)
@@ -105,8 +110,6 @@ def get_args():
             f"-ep{args.ep_size}-hbme{round(args.hbm_memory_efficiency, 2)}"
         )
 
-    file_name = get_configs_desc(args) + args.output_detail_file_suffix + "-summary.json"
-    print(file_name)
     command_line = (
         f"python -m analysis train "
         f"--model_name {args.model_name} "
@@ -123,11 +126,16 @@ def get_args():
         f"--flops_efficiency {args.flops_efficiency} "
         f"--hbm_memory_efficiency {args.hbm_memory_efficiency} "
         f"--mlp_recompute_gelu {args.mlp_recompute_gelu} "
-        f"--output_dir {args.output_dir}"
+        f"--output_dir {args.output_dir} "
+        f"--output_detail_file_suffix {args.output_detail_file_suffix} "
     )
-
-    print("Generated Command Line:")
     print(command_line)
+    os.system(command_line)
+    file_name = get_configs_desc(args) + args.output_detail_file_suffix + "-summary.json"
+    # 从file_name 读取llm-analysis分析出来的东西，在放入pipeline_model 预测时间
+    print(file_name)
+    detail_info = read_json(os.path.join("./data",file_name))
+    print(detail_info)
 
 
 
@@ -135,7 +143,7 @@ def get_args():
 
 get_args()
 """
-python portal.py --model_name open_llama_3b_v2 --gpu_name a100-pcie-40gb --tp_size 1 --pp_size 3 --sp_size 1 --dp_size 1 --gradient_accumulation_steps 4 -b 16 --seq_len 1400  --total_num_tokens 1280 --activation_recomputation 2 --flops_efficiency 0.43 --hbm_memory_efficiency 0.55 --mlp_recompute_gelu True --output_dir ./data --output_detail_file_suffix test
+python portal.py --model_name open_llama_3b_v2 --gpu_name a100-pcie-40gb --tp_size 1 --pp_size 3 --sp_size 1 --dp_size 1 --gradient_accumulation_steps 4 -b 16 --seq_len 1400  --total_num_tokens 1280 --activation_recomputation 2 --flops_efficiency 0.43 --hbm_memory_efficiency 0.55 --mlp_recompute_gelu True --output_dir ./data --output_detail_file_suffix test 
 
 127.0.0.1 www.parallels.cn
 127.0.0.1 www.parallels.com
