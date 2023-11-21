@@ -252,6 +252,7 @@ class LLMAnalysis:
         Returns:
             int: the number of parameters in the embedding layer
         """
+
         num_params_input_embedding = (self.model_config.hidden_dim *
                                       self.model_config.vocab_size)
         num_params_output_embedding = (self.model_config.hidden_dim *
@@ -583,7 +584,7 @@ class LLMAnalysis:
             return (seq_len * batch_size * hidden_dim * bytes_per_activation /
                     sp_size)
 
-        attn_compute = 0
+        memory_attn_compute = 0
         if activation_recomputation != activation_recomputation.SELECTIVE:
             if flash_attn:
                 memory_attn_compute = (2 * seq_len * batch_size * hidden_dim +
@@ -603,8 +604,8 @@ class LLMAnalysis:
                 sp_size, memory_attn_compute)
 
         memory_activation_per_layer_attn = (
-            seq_len * batch_size * hidden_dim / sp_size +
-            4 * seq_len * batch_size * hidden_dim /
+            seq_len * batch_size * hidden_dim / sp_size + # linear
+            4 * seq_len * batch_size * hidden_dim / # k q v input
             tp_size) * bytes_per_activation + memory_attn_compute
 
         if attn_dropout:
@@ -1903,7 +1904,7 @@ class LLMAnalysis:
                                  self.parallelism_config.pp_size)
 
         logger.info(f"num_layers_per_gpu = {num_layers_per_gpu}")
-        num_layers_per_gpu = 7
+        num_layers_per_gpu = 0
         if self.model_config.num_layers % self.parallelism_config.pp_size:
             logger.info(
                 "num_layers not be divisible by pp_size, taking the floor")
@@ -1936,7 +1937,6 @@ class LLMAnalysis:
         memory_left = (self.gpu_config.mem_per_GPU_in_GB * 1024**3 -
                        weight_memory_per_gpu - optimizer_state_memory_per_gpu -
                        gradient_memory_per_gpu)
-
         logger.info(
             f"weight_memory_per_gpu: {_num_to_string(weight_memory_per_gpu)}B"
             " (embedding_memory:"
@@ -1955,7 +1955,6 @@ class LLMAnalysis:
             " memory")
 
         # With pipeline parallelism, each stage contains L/p layers so the first stage must store p ×L/p = L layers worth of activations regardless of the pipeline parallel size p; activation memory required for the input embeddings, the last layer-norm, and the output layer are ignored here. Refer to https://arxiv.org/abs/2205.05198 for more details.
-
         activation_memory_batch_size_1, activation_memory_attn_batch_size_1, mlp_activation_memory_batch_size_1, layernorm_activation_memory_batch_size_1 = [
             x * self.model_config.num_layers
             for x in self.get_memory_activation_per_layer(
@@ -1977,14 +1976,13 @@ class LLMAnalysis:
         ]
         activation_memory_embedding_output_per_gpu = self.get_memory_activation_embedding_output(
             1, seq_len)
-        activation_memory_batch_size_1 += activation_memory_embedding_output_per_gpu
+        # activation_memory_batch_size_1 += activation_memory_embedding_output_per_gpu
         activation_memory_batch_size_1 += self.get_memory_activation_per_layernorm(
             1,
             seq_len,
             activation_recomputation,
             layernorm_dtype_bytes,
         )
-
         max_batch_size_per_gpu = int(memory_left //
                                      activation_memory_batch_size_1)
 
@@ -2010,7 +2008,7 @@ class LLMAnalysis:
         else:
             activation_memory_per_gpu, activation_memory_attn_per_gpu, activation_memory_mlp_per_gpu, activation_memory_layernorm_per_gpu = [
                 x * self.model_config.num_layers
-                for x in self.get_memory_activation_per_layer(
+                for x in self.get_memory_activation_per_layer( # ok
                     batch_size_per_gpu,
                     seq_len,
                     is_inference=False,
@@ -2103,6 +2101,7 @@ class LLMAnalysis:
 
         activation_memory_embedding_output_per_layer = self.get_memory_activation_embedding_output(batch_size_per_gpu,
                                                                                                    seq_len)
+        logger.info(f"???xxx activation_memory_embedding_output_per_layer = {_num_to_string(activation_memory_embedding_output_per_layer)}B")
         activation_memory_layernorm_per_layer = self.get_memory_activation_per_layernorm(
             batch_size_per_gpu,
             seq_len,
@@ -2143,6 +2142,8 @@ class LLMAnalysis:
             "latency_fwd_output_embedding_loss": latency_fwd_output_embedding_loss,
         }
 
+        for key in detail_dict:
+            logger.info(f"{key} {_num_to_string(detail_dict[key])}")
 
         logger.info(
             "num_flops_total_per_micro_batch:"
@@ -2322,6 +2323,211 @@ class LLMAnalysis:
         return summary_dict
 
 
+
+
+    def detail_info(
+        self,
+        batch_size_per_gpu: int = None,
+        gradient_accumulation_steps: int = None,
+        global_batch_size: int = None,
+        seq_len: int = None,
+        total_num_tokens: int = None,
+        activation_recomputation:
+        ActivationRecomputation = ActivationRecomputation.NONE,
+        ds_zero: DSZeRO = DSZeRO.NONE,
+        layernorm_dtype_bytes: int = BYTES_FP32,
+        master_weights_dtype_bytes: int = BYTES_FP32,
+        other_op_bytes: int = None,
+        flash_attn: bool = True,
+        softmax_dropout: bool = False,
+        mlp_activation_quant_bits: int = None,
+        mlp_1linear_quant_bits: int = None,
+        mlp_gelu_input_quant_bits: int = None,
+        mlp_2linear_quant_bits: int = None,
+        mlp_recompute_gelu: bool = False,
+        mlp_gated_linear_units: bool = False,
+        output_dir: str = None,
+        output_file_suffix: str = "",
+        num_layers_per_gpu: int = 9,
+        first_embedding: bool = True,
+        last_embedding: bool = True,
+        num_microbatch: int = 4,
+    ) -> dict:
+        """Training analysis given the configs and inputs.
+
+        Args:
+            num_microbatch: 最多存储多少个forward
+            last_embedding: 有没有最后一层embedding
+            first_embedding: 有没有第一层embedding
+            num_layers_per_gpu: GPU的layer数量
+            output_file_suffix: 输出的前缀
+            batch_size_per_gpu (int, optional): batch size per gpu (micro batch size). Defaults to None.
+            gradient_accumulation_steps (int, optional): gradient accumulation steps. Defaults to None.
+            global_batch_size (int, optional): global batch size. Defaults to None.
+            seq_len (int, optional): sequence length. Defaults to None.
+            total_num_tokens (int, optional): total number of tokens used for training. Defaults to None.
+            activation_recomputation (ActivationRecomputation, optional): activation recomputation strategy. Defaults to ActivationRecomputation.NONE.
+            ds_zero (DSZeRO, optional): which DeepSpeed ZeRO stage to use. Defaults to DSZeRO.NONE (disabled).
+            layernorm_dtype_bytes (int, optional): number of bytes in the data type for the layernorm activations. Defaults to BYTES_FP32. Often has to be FP32 in training to maintain model accuracy.
+            master_weights_dtype_bytes (int): the number of bytes in the data type for the optimizer master weights. Defaults to BYTES_FP32.
+            other_op_bytes (int, optional): the number of bytes in the optimizer state. Defaults to None, which assumes using Adam optimizer.
+            flash_attn (bool, optional): whether to use Flash Attention. Defaults to True.
+            softmax_dropout (bool, optional): whether to apply dropout after softmax. Defaults to False.
+            mlp_activation_quant_bits (int, optional): number of bits to quantize MLP activations; if set, override the values for mlp_1linear_quant_bits, mlp_gelu_input_quant_bits and mlp_2linear_quant_bits. Defaults to None.
+            mlp_1linear_quant_bits (int, optional): number of bits to quantize the input activations of the first linear layer. Defaults to None.
+            mlp_gelu_input_quant_bits (int, optional): number of bits to quantize the GELU input activations. Defaults to None.
+            mlp_2linear_quant_bits (int, optional): number of bits to quantize the input activations of the second linear layer. Defaults to None.
+            mlp_recompute_gelu (bool, optional): whether to recompute the gelu activation in the MLP backward pass. Defaults to False.
+            mlp_gated_linear_units (bool, optional): whether to use gated linear units in the MLP. Defaults to False.
+            output_dir (str, optional): if set to a directory path, write the return summary dict out to the directory with the setup. Defaults to None.
+
+        Returns:
+            dict: a summary dict of the training analysis
+        )
+        """
+        if seq_len is None:
+            assert (
+                self.model_config.max_seq_len
+                is not None), "seq_len must be set if max_seq_len is not set"
+            seq_len = self.model_config.max_seq_len
+            logger.info(f"seq_len not set, using max_seq_len {seq_len}")
+        else:
+            assert (seq_len <= self.model_config.max_seq_len
+                    ), "seq_len must be less than model max_seq_len"
+
+        self.print_config("Training Configs")
+
+        if ds_zero == DSZeRO.NONE:
+            logger.warning(
+                f"DeepSpeed ZeRO is disabled, consider using ZeRO to reduce memory usage"
+            )
+
+        logger.info(f"\n{'Analysis'.center(PRINT_LINE_WIDTH, '-')}")
+
+        """here add some code"""
+        weight_memory_embedding = self.get_memory_embedding(ds_zero)
+        # 计算权重
+        weight_memory_layer = self.get_memory_weight_per_layer(ds_zero,
+                                                               return_breakdown=False)
+        weight_memory_last_layernorm = self.get_memory_weight_last_layernorm(
+            ds_zero)
+        # 计算优化器状态和梯度 直接用即可
+        optimizer_state_memory_per_layer, gradient_memory_per_layer = self.get_memory_optimizer_state_and_gradient_per_layer(
+            master_weights_dtype_bytes, other_op_bytes, ds_zero)
+
+        optimizer_state_memory_embedding, gradient_memory_embedding = self.get_memory_optimizer_state_and_gradient_embedding(
+            master_weights_dtype_bytes, other_op_bytes, ds_zero)
+
+        optimizer_state_memory_last_layernorm, gradient_memory_last_layernorm = self.get_memory_optimizer_state_and_gradient_last_layernorm(
+            master_weights_dtype_bytes, other_op_bytes, ds_zero)
+
+        # 激活值的存储
+        activation_memory_per_layer = self.get_memory_activation_per_layer(
+            batch_size_per_gpu,
+            seq_len,
+            is_inference=False,
+            activation_recomputation=activation_recomputation,
+            layernorm_dtype_bytes=layernorm_dtype_bytes,
+            flash_attn=flash_attn,
+            softmax_dropout=softmax_dropout,
+            mlp_activation_quant_bits=mlp_activation_quant_bits,
+            mlp_1linear_quant_bits=mlp_1linear_quant_bits,
+            mlp_gelu_input_quant_bits=mlp_gelu_input_quant_bits,
+            mlp_2linear_quant_bits=mlp_2linear_quant_bits,
+            mlp_recompute_gelu=mlp_recompute_gelu,
+            return_breakdown=False,
+        )
+
+        activation_memory_embedding_output_per_layer = self.get_memory_activation_embedding_output(batch_size_per_gpu,
+                                                                                                   seq_len)
+        activation_memory_layernorm_per_layer = self.get_memory_activation_per_layernorm(
+            batch_size_per_gpu,
+            seq_len,
+            activation_recomputation,
+            layernorm_dtype_bytes,
+        )
+        # num_layers_per_gpu = 9
+        # first_embedding = True
+        # last_embedding = True
+        # num_microbatch = 4
+
+
+        embedding_memory = 0
+        if first_embedding:
+            embedding_memory = weight_memory_embedding + optimizer_state_memory_embedding + gradient_memory_embedding
+        if last_embedding:
+            embedding_memory = weight_memory_embedding + optimizer_state_memory_embedding + gradient_memory_embedding + activation_memory_embedding_output_per_layer
+
+        normal_layer_memory = (weight_memory_layer + optimizer_state_memory_per_layer + gradient_memory_per_layer) * num_layers_per_gpu + activation_memory_per_layer * num_layers_per_gpu * num_microbatch
+        logger.info(f"embedding_memory = {_num_to_string(embedding_memory)} normal_layer_memory = {_num_to_string(normal_layer_memory)}")
+        total_memory = normal_layer_memory + embedding_memory
+        logger.info(f"total_memory = {_num_to_string(total_memory)}")
+
+        # latency
+        (
+            latency_fwd_per_layer,
+            breakdown_per_layer,
+        ) = self.get_latency_fwd_per_layer(
+            batch_size_per_gpu,
+            seq_len,
+            False,
+            activation_recomputation,
+            layernorm_dtype_bytes,
+        )
+        latency_fwd_input_embedding = self.get_latency_fwd_input_embedding(
+            batch_size_per_gpu,
+            seq_len,
+            dtype_bytes=self.dtype_config.embedding_bits / BITS_PER_BYTE,
+        )
+        latency_fwd_output_embedding_loss = (
+            self.get_latency_fwd_output_embedding_loss(batch_size_per_gpu, seq_len))
+
+        embedding_latency = 0
+        if first_embedding:
+            embedding_latency = latency_fwd_input_embedding
+        if last_embedding:
+            embedding_latency = latency_fwd_output_embedding_loss
+
+        normal_layer_latency = num_layers_per_gpu *  latency_fwd_per_layer
+        total_latency = normal_layer_latency + embedding_latency
+        logger.info(f"total_latency = {round(total_latency, 3)} s")
+        detail_dict = {
+            "weight_memory_embedding": weight_memory_embedding,
+            "weight_memory_last_layernorm":weight_memory_last_layernorm,
+            "weight_memory_layer": weight_memory_layer,
+            "optimizer_state_memory_embedding":optimizer_state_memory_embedding,
+            "optimizer_state_memory_per_layer": optimizer_state_memory_per_layer,
+            "optimizer_state_memory_last_layernorm":optimizer_state_memory_last_layernorm,
+            "gradient_memory_embedding":gradient_memory_embedding,
+            "gradient_memory_per_layer": gradient_memory_per_layer,
+            "gradient_memory_last_layernorm":gradient_memory_last_layernorm,
+            "activation_memory_per_layer": activation_memory_per_layer,
+            "activation_memory_embedding_output_per_layer": activation_memory_embedding_output_per_layer,
+            "activation_memory_layernorm_per_layer": activation_memory_layernorm_per_layer,
+            "embedding_memory":embedding_memory,
+            "normal_layer_memory":normal_layer_memory,
+            "total_memory":total_memory,
+            "latency_fwd_per_layer": latency_fwd_per_layer,
+            "latency_fwd_input_embedding": latency_fwd_input_embedding,
+            "latency_fwd_output_embedding_loss": latency_fwd_output_embedding_loss,
+            "embedding_latency":embedding_latency,
+            "normal_layer_latency":normal_layer_latency,
+            "total_latency":total_latency
+        }
+
+        for key in detail_dict:
+            logger.info(f"{key} {_num_to_string(detail_dict[key])}")
+
+        logger.info(self.get_readable_summary_dict(detail_dict))
+        if output_dir is not None:
+            self.output_summary_dict(detail_dict,
+                                     output_dir,
+                                     print_human_readable=True,
+                                     output_file_suffix=output_file_suffix)
+
+        return detail_dict
+
+
 def infer(
     model_name="facebook_opt-1.3b",
     gpu_name="a100-sxm-40gb",
@@ -2462,13 +2668,21 @@ def train(
     num_gpus_per_node: int = NUM_GPUS_PER_NODE,
     output_dir: str = None,
     output_file_suffix: str = "",
-    output_detail_file_suffix: str = "",
+    num_layers_per_gpu: int = 9,
+    first_embedding: bool = True,
+    last_embedding: bool = True,
+    num_microbatch: int = 4,
 ) -> dict:
     """Entry point function of training analysis for the command line interface. This
     uses pre-defined name-to-configuration mapping and common arguments to construct
     LLMAnalysis.
 
     Args:
+        num_microbatch: 最多存储多少个forward
+        last_embedding: 有没有最后一层embedding
+        first_embedding: 有没有第一层embedding
+        num_layers_per_gpu: GPU的layer数量
+        output_file_suffix: 输出的前缀
         model_name (str, optional): model name to query the pre-defined `model_configs` dict, or model config json file path, if not found, query Hugging Face to construct ModelConfig. Defaults to "facebook_opt-1.3b".
         gpu_name (str, optional): gpu name to query the pre-defined `gpu_configs` dict. Defaults to "a100-sxm-40gb".
         dtype_name (str, optional): data type name to pre-defined `dtype_configs` dict. Defaults to "w16a16e16".
@@ -2552,7 +2766,7 @@ def train(
         flops_efficiency=flops_efficiency,
     )
 
-    summary_dict = analysis.training(
+    summary_dict = analysis.detail_info(
         batch_size_per_gpu=batch_size_per_gpu,
         gradient_accumulation_steps=gradient_accumulation_steps,
         global_batch_size=global_batch_size,
@@ -2574,7 +2788,10 @@ def train(
         mlp_gated_linear_units=mlp_gated_linear_units,
         output_dir=output_dir,
         output_file_suffix=output_file_suffix,
-        output_detail_file_suffix = output_detail_file_suffix,
+        num_layers_per_gpu=num_layers_per_gpu,
+        first_embedding=first_embedding,
+        last_embedding=last_embedding,
+        num_microbatch=num_microbatch
     )
 
     return summary_dict
